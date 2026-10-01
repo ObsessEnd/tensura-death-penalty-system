@@ -1,14 +1,14 @@
 // =========================================================================
-// Tensura Evolutions - Death Penalty System (NeoForge 1.21.1)
-// Tự động hóa: 
-//   1. Trừ 30% EP (Magicule & Aura) khi chết thật qua /gamerule epDeathPenalty 30
-//   2. Tự động xóa ngẫu nhiên 1 Kỹ năng Độc nhất (Unique Skill) của người chơi
-//   3. Tự động xóa ngẫu nhiên 1 vật phẩm trong Xác chết (Corpse)
+// Tensura Evolutions - Death & Revive Penalty System (NeoForge 1.21.1)
+// Automated Features: 
+//   1. Deduct 30% EP (Magicule & Aura) upon true death via /gamerule epDeathPenalty 30
+//   2. Automatically dissolve 1 random Unique Skill from the player's soul
+//   3. Automatically destroy 1 random item from the player's Corpse
 // =========================================================================
 
 const SkillAPI = Java.loadClass('io.github.manasmods.manascore.skill.api.SkillAPI');
 
-// Danh sách các ID Unique Skill chính thức trong Tensura & Addons
+// Official list of Unique Skill IDs in Tensura & Addons
 const UNIQUE_SKILL_IDS = [
     "tensura:absolute_severance", "tensura:analyst", "tensura:berserk", "tensura:berserker",
     "tensura:bewilder", "tensura:chef", "tensura:chosen_one", "tensura:commander",
@@ -47,12 +47,12 @@ const UNIQUE_SKILL_IDS = [
     "trnightmare:deluge", "trnightmare:imitator"
 ];
 
-// Lắng nghe sự kiện người chơi Hồi sinh (Respawn)
+// Listen to Player Respawn event
 PlayerEvents.respawned(event => {
     const player = event.player;
     const server = player.server;
 
-    // 1. XỬ LÝ XÓA 1 KỸ NĂNG ĐỘC NHẤT (UNIQUE SKILL) NGẪU NHIÊN
+    // 1. DISSOLVE 1 RANDOM UNIQUE SKILL
     try {
         const skillStorage = SkillAPI.getSkillsFrom(player);
         if (skillStorage) {
@@ -65,7 +65,7 @@ PlayerEvents.respawned(event => {
                     let skillInstance = iterator.next();
                     let skillId = skillInstance.getSkillId().toString().toLowerCase();
 
-                    // Kiểm tra xem kỹ năng có nằm trong danh sách Unique không
+                    // Check if skill is in Unique Skill list
                     if (UNIQUE_SKILL_IDS.includes(skillId) || skillId.includes("unique")) {
                         userUniqueSkills.push(skillInstance);
                     }
@@ -76,30 +76,29 @@ PlayerEvents.respawned(event => {
                     let chosenSkill = userUniqueSkills[randomIndex];
                     let skillName = chosenSkill.getDisplayName().getString();
 
-                    // Tước đoạt kỹ năng khỏi linh hồn người chơi
+                    // Strip skill from the player's soul
                     skillStorage.forgetSkill(chosenSkill);
 
-                    // Thông báo Tiếng nói thế giới (Voice of the World)
-                    player.tell("§c« [Tiếng nói thế giới]: Do bạn đã tử vong mà không được cứu sống... »");
-                    player.tell("§c« Linh hồn bị tổn hại nặng nề, Kỹ năng Độc nhất §6[" + skillName + "]§c đã bị phân rã hoàn toàn! »");
-                    server.tell("§7[Thông báo]: Người chơi §e" + player.name.string + " §7đã tử trận và bị tước đi Kỹ năng Độc nhất §c[" + skillName + "]§7!");
+                    // Broadcast Voice of the World announcement
+                    player.tell("§c« [Voice of the World]: You have suffered true death without rescue... »");
+                    player.tell("§c« Severe soul fracture detected: Unique Skill §6[" + skillName + "]§c has been permanently dissolved! »");
+                    server.tell("§7[Notice]: Player §e" + player.name.string + " §7has fallen in battle and lost Unique Skill §c[" + skillName + "]§7!");
                 } else {
-                    player.tell("§7« [Tiếng nói thế giới]: Bạn không sở hữu Kỹ năng Độc nhất nào để bị phân rã. »");
+                    player.tell("§7« [Voice of the World]: No Unique Skills were available to dissolve. »");
                 }
             }
         }
     } catch (e) {
-        console.error("[Tensura Death Penalty] Lỗi khi xử lý kỹ năng: " + e);
+        console.error("[Tensura Death Penalty] Error handling skill removal: " + e);
     }
 
-    // 2. XỬ LÝ TIÊU HỦY 1 VẬT PHẨM TRONG XÁC CHẾT (CORPSE)
+    // 2. DESTROY 1 RANDOM ITEM IN CORPSE
     try {
-        // Xóa 1 slot vật phẩm trong xác chết gần nhất của người chơi tại vị trí tử trận
         server.scheduleInTicks(20, () => {
             server.runCommandSilent(`execute at ${player.username} run data remove entity @e[type=corpse:corpse,limit=1,sort=nearest] Items[0]`);
-            player.tell("§c« [Tiếng nói thế giới]: 1 vật phẩm trong di hài của bạn đã bị tiêu hủy vĩnh viễn! »");
+            player.tell("§c« [Voice of the World]: 1 item from your corpse has disintegrated into nothingness! »");
         });
     } catch (e) {
-        console.error("[Tensura Death Penalty] Lỗi khi xử lý xác chết: " + e);
+        console.error("[Tensura Death Penalty] Error handling corpse item removal: " + e);
     }
 });
