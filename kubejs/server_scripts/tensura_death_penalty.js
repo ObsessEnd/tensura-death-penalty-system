@@ -1,15 +1,36 @@
 // =========================================================================
-// Tensura Evolutions - Death & Revive Penalty System (NeoForge 1.21.1)
-// Automated Features: 
-//   1. Deduct 30% EP (Magicule & Aura) upon true death via /gamerule epDeathPenalty 30
-//   2. Automatically dissolve 1 random Unique Skill from the player's soul
-//   3. Automatically destroy 1 random item from the player's Corpse
+// Tensura Evolutions - Death Penalty System (NeoForge 1.21.1)
+// Tự động hóa: 
+//   1. Trừ 30% EP khi chết qua /gamerule epDeathPenalty 30
+//   2. Tự động xóa ngẫu nhiên 1 Kỹ năng Độc nhất (Unique Skill) của người chơi
+//   3. Tự động tiêu hủy ngẫu nhiên 1 vật phẩm trong Xác chết (Corpse) / Túi đồ
 // =========================================================================
 
-const SkillAPI = Java.loadClass('io.github.manasmods.manascore.skill.api.SkillAPI');
+// Khởi tạo các Java Class an toàn bên ngoài
+var SkillAPI = null;
+var DeathManager = null;
+var ItemStack = null;
 
-// Official list of Unique Skill IDs in Tensura & Addons
-const UNIQUE_SKILL_IDS = [
+try {
+    SkillAPI = Java.loadClass('io.github.manasmods.manascore.skill.api.SkillAPI');
+} catch (e) {
+    console.error('[Tensura Death Penalty] Không thể nạp SkillAPI: ' + e);
+}
+
+try {
+    DeathManager = Java.loadClass('de.maxhenkel.corpse.corelib.death.DeathManager');
+} catch (e) {
+    console.log('[Tensura Death Penalty] Mod Corpse không khả dụng hoặc chưa cài.');
+}
+
+try {
+    ItemStack = Java.loadClass('net.minecraft.world.item.ItemStack');
+} catch (e) {
+    console.error('[Tensura Death Penalty] Không thể nạp ItemStack: ' + e);
+}
+
+// Danh sách các ID Unique Skill chính thức trong Tensura & Addons
+var UNIQUE_SKILL_IDS = [
     "tensura:absolute_severance", "tensura:analyst", "tensura:berserk", "tensura:berserker",
     "tensura:bewilder", "tensura:chef", "tensura:chosen_one", "tensura:commander",
     "tensura:cook", "tensura:creator", "tensura:degenerate", "tensura:engorger",
@@ -47,58 +68,155 @@ const UNIQUE_SKILL_IDS = [
     "trnightmare:deluge", "trnightmare:imitator"
 ];
 
-// Listen to Player Respawn event
-PlayerEvents.respawned(event => {
-    const player = event.player;
-    const server = player.server;
+// Lắng nghe sự kiện hồi sinh (Respawn)
+PlayerEvents.respawned(function(event) {
+    applyDeathPenalty(event);
+});
 
-    // 1. DISSOLVE 1 RANDOM UNIQUE SKILL
+function applyDeathPenalty(event) {
+    var player = event.player;
+    var server = player.server;
+
+    // -------------------------------------------------------------
+    // 1. PHÂN RÃ 1 KỸ NĂNG ĐỘC NHẤT (UNIQUE SKILL) NGẪU NHIÊN
+    // -------------------------------------------------------------
     try {
-        const skillStorage = SkillAPI.getSkillsFrom(player);
-        if (skillStorage) {
-            const learnedSkills = skillStorage.getLearnedSkills();
-            if (learnedSkills && !learnedSkills.isEmpty()) {
-                let userUniqueSkills = [];
-
-                let iterator = learnedSkills.iterator();
-                while (iterator.hasNext()) {
-                    let skillInstance = iterator.next();
-                    let skillId = skillInstance.getSkillId().toString().toLowerCase();
-
-                    // Check if skill is in Unique Skill list
-                    if (UNIQUE_SKILL_IDS.includes(skillId) || skillId.includes("unique")) {
-                        userUniqueSkills.push(skillInstance);
+        if (SkillAPI) {
+            var storage = SkillAPI.getSkillsFrom(player);
+            if (storage) {
+                var learned = storage.getLearnedSkills();
+                if (learned && !learned.isEmpty()) {
+                    var userUniques = [];
+                    var iter = learned.iterator();
+                    while (iter.hasNext()) {
+                        var inst = iter.next();
+                        var sid = inst.getSkillId().toString().toLowerCase();
+                        if (UNIQUE_SKILL_IDS.indexOf(sid) !== -1 || sid.indexOf("unique") !== -1) {
+                            userUniques.push(inst);
+                        }
                     }
-                }
 
-                if (userUniqueSkills.length > 0) {
-                    let randomIndex = Math.floor(Math.random() * userUniqueSkills.length);
-                    let chosenSkill = userUniqueSkills[randomIndex];
-                    let skillName = chosenSkill.getDisplayName().getString();
+                    if (userUniques.length > 0) {
+                        var rIndex = Math.floor(Math.random() * userUniques.length);
+                        var targetSkill = userUniques[rIndex];
+                        var skillId = targetSkill.getSkillId();
+                        var skillName = targetSkill.getSkill().getName().getString();
 
-                    // Strip skill from the player's soul
-                    skillStorage.forgetSkill(chosenSkill);
+                        // Tước bỏ kỹ năng vĩnh viễn
+                        storage.forgetSkill(skillId);
 
-                    // Broadcast Voice of the World announcement
-                    player.tell("§c« [Voice of the World]: You have suffered true death without rescue... »");
-                    player.tell("§c« Severe soul fracture detected: Unique Skill §6[" + skillName + "]§c has been permanently dissolved! »");
-                    server.tell("§7[Notice]: Player §e" + player.name.string + " §7has fallen in battle and lost Unique Skill §c[" + skillName + "]§7!");
-                } else {
-                    player.tell("§7« [Voice of the World]: No Unique Skills were available to dissolve. »");
+                        // Thông báo
+                        player.tell("§c« [Tiếng nói thế giới]: Do bạn đã tử vong mà không được cứu sống... »");
+                        player.tell("§c« Linh hồn tổn thương trầm trọng: Kỹ năng Độc nhất §6[" + skillName + "]§c đã bị phân rã hoàn toàn! »");
+                        server.tell("§7[Thông báo]: Người chơi §e" + player.name.string + " §7đã tử trận và bị phân rã Kỹ năng Độc nhất §c[" + skillName + "]§7!");
+                    } else {
+                        player.tell("§7« [Tiếng nói thế giới]: Bạn không sở hữu Kỹ năng Độc nhất nào để bị phân rã. »");
+                    }
                 }
             }
         }
-    } catch (e) {
-        console.error("[Tensura Death Penalty] Error handling skill removal: " + e);
+    } catch (errSkill) {
+        console.error("[Tensura Death Penalty] Lỗi phân rã kỹ năng: " + errSkill);
     }
 
-    // 2. DESTROY 1 RANDOM ITEM IN CORPSE
+    // -------------------------------------------------------------
+    // 2. TIÊU HỦY 1 VẬT PHẨM NGẪU NHIÊN TRONG XÁC CHẾT HOẶC TÚI ĐỒ
+    // -------------------------------------------------------------
     try {
-        server.scheduleInTicks(20, () => {
-            server.runCommandSilent(`execute at ${player.username} run data remove entity @e[type=corpse:corpse,limit=1,sort=nearest] Items[0]`);
-            player.tell("§c« [Voice of the World]: 1 item from your corpse has disintegrated into nothingness! »");
-        });
-    } catch (e) {
-        console.error("[Tensura Death Penalty] Error handling corpse item removal: " + e);
+        var itemRemoved = false;
+
+        // Ưu tiên 1: Xóa trực tiếp trong Xác chết (Corpse mod)
+        if (DeathManager && ItemStack) {
+            var deaths = DeathManager.getDeaths(player);
+            if (deaths && !deaths.isEmpty()) {
+                var latestDeath = deaths.get(deaths.size() - 1);
+                var validSlots = [];
+
+                // Quét Main Inventory (36 ô)
+                var mainInv = latestDeath.getMainInventory();
+                if (mainInv) {
+                    for (var i = 0; i < mainInv.size(); i++) {
+                        var st = mainInv.get(i);
+                        if (st && !st.isEmpty()) {
+                            validSlots.push({ list: mainInv, index: i, stack: st });
+                        }
+                    }
+                }
+
+                // Quét Trang bị Giáp (4 ô)
+                var armorInv = latestDeath.getArmorInventory();
+                if (armorInv) {
+                    for (var j = 0; j < armorInv.size(); j++) {
+                        var stA = armorInv.get(j);
+                        if (stA && !stA.isEmpty()) {
+                            validSlots.push({ list: armorInv, index: j, stack: stA });
+                        }
+                    }
+                }
+
+                // Quét Tay phụ (1 ô)
+                var offInv = latestDeath.getOffHandInventory();
+                if (offInv) {
+                    for (var k = 0; k < offInv.size(); k++) {
+                        var stO = offInv.get(k);
+                        if (stO && !stO.isEmpty()) {
+                            validSlots.push({ list: offInv, index: k, stack: stO });
+                        }
+                    }
+                }
+
+                // Quét Phụ kiện Curios nếu có
+                var addInv = latestDeath.getAdditionalItems();
+                if (addInv) {
+                    for (var m = 0; m < addInv.size(); m++) {
+                        var stM = addInv.get(m);
+                        if (stM && !stM.isEmpty()) {
+                            validSlots.push({ list: addInv, index: m, stack: stM });
+                        }
+                    }
+                }
+
+                if (validSlots.length > 0) {
+                    var rSlot = validSlots[Math.floor(Math.random() * validSlots.length)];
+                    var removedItemName = rSlot.stack.getHoverName().getString();
+
+                    // Tiêu hủy vật phẩm thành ItemStack.EMPTY
+                    rSlot.list.set(rSlot.index, ItemStack.EMPTY);
+
+                    // Đồng bộ lưu lại vào file xác chết trên đĩa
+                    DeathManager.addDeath(player, latestDeath);
+
+                    player.tell("§c« [Tiếng nói thế giới]: Vật phẩm §6[" + removedItemName + "]§c trong di hài của bạn đã bị tiêu hủy vĩnh viễn! »");
+                    itemRemoved = true;
+                }
+            }
+        }
+
+        // Ưu tiên 2 (Dự phòng): Nếu không có Corpse hoặc chơi keepInventory=true, xóa 1 món trong túi đồ người chơi
+        if (!itemRemoved && ItemStack) {
+            var pInv = player.inventory;
+            var pSlots = [];
+            for (var slotIdx = 0; slotIdx < pInv.containerSize; slotIdx++) {
+                var pStack = pInv.getItem(slotIdx);
+                if (pStack && !pStack.isEmpty()) {
+                    pSlots.push({ index: slotIdx, stack: pStack });
+                }
+            }
+
+            if (pSlots.length > 0) {
+                var chosenPSlot = pSlots[Math.floor(Math.random() * pSlots.length)];
+                var pItemName = chosenPSlot.stack.getHoverName().getString();
+                pInv.setItem(chosenPSlot.index, ItemStack.EMPTY);
+
+                player.tell("§c« [Tiếng nói thế giới]: Vật phẩm §6[" + pItemName + "]§c trong túi đồ của bạn đã bị tiêu hủy vĩnh viễn! »");
+                itemRemoved = true;
+            }
+        }
+
+        if (!itemRemoved) {
+            player.tell("§7« [Tiếng nói thế giới]: Bạn không có vật phẩm nào trong di hài hoặc túi đồ để tiêu hủy. »");
+        }
+    } catch (errItem) {
+        console.error("[Tensura Death Penalty] Lỗi tiêu hủy vật phẩm: " + errItem);
     }
-});
+}
