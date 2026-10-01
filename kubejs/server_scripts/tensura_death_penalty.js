@@ -10,6 +10,7 @@
 var SkillAPI = null;
 var DeathManager = null;
 var ItemStack = null;
+var AABB = null;
 
 try {
     SkillAPI = Java.loadClass('io.github.manasmods.manascore.skill.api.SkillAPI');
@@ -27,6 +28,12 @@ try {
     ItemStack = Java.loadClass('net.minecraft.world.item.ItemStack');
 } catch (e) {
     console.error('[Tensura Death Penalty] Failed to load ItemStack: ' + e);
+}
+
+try {
+    AABB = Java.loadClass('net.minecraft.world.phys.AABB');
+} catch (e) {
+    console.error('[Tensura Death Penalty] Failed to load AABB: ' + e);
 }
 
 // Official list of Unique Skill IDs in Tensura & Addons
@@ -183,11 +190,89 @@ function applyDeathPenalty(event) {
                     var rSlot = validSlots[Math.floor(Math.random() * validSlots.length)];
                     var removedItemName = rSlot.stack.getHoverName().getString();
 
-                    // Destroy the chosen item
+                    // Destroy the chosen item in data structure
                     rSlot.list.set(rSlot.index, ItemStack.EMPTY);
 
                     // Persist updated corpse inventory to disk
                     DeathManager.addDeath(player, latestDeath);
+
+                    // ALSO update the live CorpseEntity in world RAM so it's gone when right-clicked!
+                    try {
+                        var deathX = latestDeath.getPosX();
+                        var deathY = latestDeath.getPosY();
+                        var deathZ = latestDeath.getPosZ();
+                        var targetDim = latestDeath.getDimension();
+                        var targetLevel = sLevel;
+
+                        if (server && targetDim) {
+                            try {
+                                var dimKey = Java.loadClass('net.minecraft.resources.ResourceLocation').parse(targetDim);
+                                var resKey = Java.loadClass('net.minecraft.resources.ResourceKey').create(Java.loadClass('net.minecraft.core.registries.Registries').DIMENSION, dimKey);
+                                var foundLevel = server.getLevel(resKey);
+                                if (foundLevel) targetLevel = foundLevel;
+                            } catch(eDim) {}
+                        }
+
+                        // Ensure chunk is loaded at death site
+                        var chunkX = Math.floor(deathX) >> 4;
+                        var chunkZ = Math.floor(deathZ) >> 4;
+                        try {
+                            targetLevel.getChunk(chunkX, chunkZ);
+                        } catch(eChunk) {}
+
+                        var foundLiveCorpse = null;
+
+                        // Search within bounding box around death point
+                        if (AABB) {
+                            var box = new AABB(deathX - 16, deathY - 32, deathZ - 16, deathX + 16, deathY + 32, deathZ + 16);
+                            var boxEntities = targetLevel.getEntitiesWithin(box);
+                            if (boxEntities) {
+                                var iterB = boxEntities.iterator();
+                                while (iterB.hasNext()) {
+                                    var be = iterB.next();
+                                    if (be && be.type == 'corpse:corpse') {
+                                        try {
+                                            if (be.getDeath && be.getDeath() && be.getDeath().getId().equals(latestDeath.getId())) {
+                                                foundLiveCorpse = be;
+                                                break;
+                                            }
+                                        } catch(eBE) {}
+                                    }
+                                }
+                            }
+                        }
+
+                        // Fallback: search all loaded entities in level
+                        if (!foundLiveCorpse) {
+                            var allEntities = targetLevel.getEntities();
+                            if (allEntities) {
+                                var iterAll = allEntities.iterator();
+                                while (iterAll.hasNext()) {
+                                    var ae = iterAll.next();
+                                    if (ae && ae.type == 'corpse:corpse') {
+                                        try {
+                                            if (ae.getDeath && ae.getDeath() && ae.getDeath().getId().equals(latestDeath.getId())) {
+                                                foundLiveCorpse = ae;
+                                                break;
+                                            }
+                                        } catch(eAE) {}
+                                    }
+                                }
+                            }
+                        }
+
+                        // Update the live entity's memory directly!
+                        if (foundLiveCorpse) {
+                            foundLiveCorpse.setDeath(latestDeath);
+                            try {
+                                if (foundLiveCorpse.setEquipment) {
+                                    foundLiveCorpse.setEquipment(latestDeath.getEquipment());
+                                }
+                            } catch(eEq) {}
+                        }
+                    } catch(errLive) {
+                        console.error("[Tensura Death Penalty] Error syncing live CorpseEntity RAM: " + errLive);
+                    }
 
                     player.tell("§c« [Voice of the World]: Item §6[" + removedItemName + "]§c from your corpse has disintegrated into nothingness! »");
                     itemRemoved = true;
