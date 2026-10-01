@@ -127,9 +127,12 @@ function applyDeathPenalty(event) {
 
         // Priority 1: Direct deletion from Corpse mod storage
         if (DeathManager && ItemStack) {
-            var deaths = DeathManager.getDeaths(player);
+            var sLevel = player.serverLevel ? player.serverLevel() : player.level;
+            // Use (ServerLevel, UUID) to bypass the recursive StackOverflow bug in Corpse mod's getDeaths(ServerPlayer)
+            var deaths = DeathManager.getDeaths(sLevel, player.uuid);
             if (deaths && !deaths.isEmpty()) {
-                var latestDeath = deaths.get(deaths.size() - 1);
+                // In Corpse mod, deaths are sorted by timestamp descending, so index 0 is the newest death
+                var latestDeath = deaths.get(0);
                 var validSlots = [];
 
                 // Scan Main Inventory (36 slots)
