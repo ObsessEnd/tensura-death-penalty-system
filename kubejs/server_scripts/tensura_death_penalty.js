@@ -97,8 +97,42 @@ function applyDeathPenalty(event) {
                     var iter = learned.iterator();
                     while (iter.hasNext()) {
                         var inst = iter.next();
-                        var sid = inst.getSkillId().toString().toLowerCase();
-                        if (UNIQUE_SKILL_IDS.indexOf(sid) !== -1 || sid.indexOf("unique") !== -1) {
+                        var skillObj = inst.getSkill();
+                        var isUnique = false;
+                        var isExplicitNonUnique = false;
+
+                        // 1. Native Tensura Skill check via getType()
+                        try {
+                            if (skillObj && skillObj.getType) {
+                                var sType = skillObj.getType();
+                                if (sType) {
+                                    var typeName = "" + (sType.name ? sType.name() : sType.toString());
+                                    if (typeName.toUpperCase() === "UNIQUE") {
+                                        isUnique = true;
+                                    } else {
+                                        // Explicitly identified as EXTRA, COMMON, INTRINSIC, RESISTANCE, etc.
+                                        isExplicitNonUnique = true;
+                                    }
+                                }
+                            }
+                        } catch (eType) {}
+
+                        // 2. Curated list / registry ID check (only if not explicitly non-unique)
+                        if (!isExplicitNonUnique && !isUnique) {
+                            var sid = inst.getSkillId().toString().toLowerCase();
+                            if (UNIQUE_SKILL_IDS.indexOf(sid) !== -1) {
+                                isUnique = true;
+                            } else {
+                                var parts = sid.split(":");
+                                var path = parts.length > 1 ? parts[1] : parts[0];
+                                // Match path only, preventing namespace collisions like 'tr_unique_monsters:appraisal_eye'
+                                if (path.indexOf("unique") !== -1) {
+                                    isUnique = true;
+                                }
+                            }
+                        }
+
+                        if (isUnique) {
                             userUniques.push(inst);
                         }
                     }
@@ -261,14 +295,74 @@ function applyDeathPenalty(event) {
                             }
                         }
 
-                        // Update the live entity's memory directly!
+                        // Update the live entity's memory directly via multi-tier reflection!
                         if (foundLiveCorpse) {
-                            foundLiveCorpse.setDeath(latestDeath);
+                            var rawCorpse = (foundLiveCorpse.minecraftEntity) ? foundLiveCorpse.minecraftEntity : foundLiveCorpse;
+                            var synced = false;
+
+                            // Tier 1: Try Rhino JavaBean property assignment
                             try {
-                                if (foundLiveCorpse.setEquipment) {
-                                    foundLiveCorpse.setEquipment(latestDeath.getEquipment());
+                                rawCorpse.death = latestDeath;
+                                synced = true;
+                            } catch (eBean) {}
+
+                            // Tier 2: Try direct Java method reflection (bypasses Rhino method dispatcher)
+                            if (!synced) {
+                                try {
+                                    var corpseMethods = rawCorpse.getClass().getMethods();
+                                    for (var mIdx = 0; mIdx < corpseMethods.length; mIdx++) {
+                                        if (corpseMethods[mIdx].getName().equals("setDeath")) {
+                                            corpseMethods[mIdx].setAccessible(true);
+                                            corpseMethods[mIdx].invoke(rawCorpse, latestDeath);
+                                            synced = true;
+                                            break;
+                                        }
+                                    }
+                                } catch (eReflect) {}
+                            }
+
+                            // Tier 3: Try direct field reflection (directly modifies 'protected Death death' in JVM memory)
+                            if (!synced) {
+                                try {
+                                    var cClass = rawCorpse.getClass();
+                                    while (cClass != null && !synced) {
+                                        try {
+                                            var dField = cClass.getDeclaredField("death");
+                                            dField.setAccessible(true);
+                                            dField.set(rawCorpse, latestDeath);
+                                            synced = true;
+                                            break;
+                                        } catch (eF) {
+                                            cClass = cClass.getSuperclass();
+                                        }
+                                    }
+                                } catch (eFieldReflect) {}
+                            }
+
+                            // Tier 4: Update equipment sync
+                            try {
+                                var eq = latestDeath.getEquipment();
+                                if (eq) {
+                                    try {
+                                        rawCorpse.setEquipment(eq);
+                                    } catch (eEqDirect) {
+                                        var eqMethods = rawCorpse.getClass().getMethods();
+                                        for (var eIdx = 0; eIdx < eqMethods.length; eIdx++) {
+                                            if (eqMethods[eIdx].getName().equals("setEquipment")) {
+                                                eqMethods[eIdx].setAccessible(true);
+                                                eqMethods[eIdx].invoke(rawCorpse, eq);
+                                                break;
+                                            }
+                                        }
+                                    }
                                 }
-                            } catch(eEq) {}
+                            } catch (eEq) {}
+
+                            if (synced) {
+                                console.log("[Tensura Death Penalty] Successfully synchronized live CorpseEntity in-world RAM.");
+                            } else {
+                                console.warn("[Tensura Death Penalty] Could not mutate live CorpseEntity RAM directly, relying on disk data.");
+                            }
                         }
                     } catch(errLive) {
                         console.error("[Tensura Death Penalty] Error syncing live CorpseEntity RAM: " + errLive);
